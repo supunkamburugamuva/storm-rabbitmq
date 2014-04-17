@@ -6,6 +6,7 @@ import backtype.storm.topology.OutputFieldsDeclarer;
 import backtype.storm.topology.base.BaseRichSpout;
 import com.rabbitmq.client.*;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.Map;
@@ -25,6 +26,16 @@ public class RabbitMQSpout extends BaseRichSpout {
     private ErrorReporter reporter;
 
     private RabbitMQConfigurator configurator;
+
+    public RabbitMQSpout(RabbitMQConfigurator configurator, ErrorReporter reporter) {
+        this(configurator, reporter, LoggerFactory.getLogger(RabbitMQSpout.class));
+    }
+
+    public RabbitMQSpout(RabbitMQConfigurator configurator, ErrorReporter reporter, Logger logger) {
+        this.configurator = configurator;
+        this.reporter = reporter;
+        this.logger = logger;
+    }
 
     public enum State {
 
@@ -51,12 +62,33 @@ public class RabbitMQSpout extends BaseRichSpout {
 
     private void reinitIfNecessary() {
         if (consumerTag == null || consumer == null) {
-            close();
-            open();
+            closeConnection();
+            openConnection();
         }
     }
 
-    public void open() {
+    public void closeConnection() {
+        try {
+            if (channel != null && channel.isOpen()) {
+                if (consumerTag != null) channel.basicCancel(consumerTag);
+                channel.close();
+            }
+        } catch (Exception e) {
+            logger.debug("error closing channel and/or cancelling consumer", e);
+        }
+        try {
+            logger.info("closing connection to rabbitmq: " + connection);
+            connection.close();
+        } catch (Exception e) {
+            logger.debug("error closing connection", e);
+        }
+        consumer = null;
+        consumerTag = null;
+        channel = null;
+        connection = null;
+    }
+
+    public void openConnection() {
         try {
             connection = createConnection();
             channel = connection.createChannel();
