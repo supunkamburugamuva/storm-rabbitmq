@@ -7,5 +7,5 @@ import java.io.Serializable;
 public interface RabbitMQConfigurator extends Serializable {
     ConnectionFactory getConnectionFactory();
 
-
+    boolean isAutoAcking();
 }

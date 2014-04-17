@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 
 public class RabbitMQSpout extends BaseRichSpout {
-    private ConnectionFactory connectionFactory;
     private int prefetchCount;
     private String queueName;
     private boolean requeueOnFail;
@@ -22,6 +21,10 @@ public class RabbitMQSpout extends BaseRichSpout {
     private Channel channel;
     private QueueingConsumer consumer;
     private String consumerTag;
+
+    private ErrorReporter reporter;
+
+    private RabbitMQConfigurator configurator;
 
     public enum State {
 
@@ -40,10 +43,6 @@ public class RabbitMQSpout extends BaseRichSpout {
     @Override
     public void nextTuple() {
 
-    }
-
-    protected boolean isAutoAcking() {
-        return true;
     }
 
     private void reset() {
@@ -67,7 +66,7 @@ public class RabbitMQSpout extends BaseRichSpout {
             }
 
             consumer = new QueueingConsumer(channel);
-            consumerTag = channel.basicConsume(queueName, isAutoAcking(), consumer);
+            consumerTag = channel.basicConsume(queueName, configurator.isAutoAcking(), consumer);
         } catch (Exception e) {
             reset();
             logger.error("could not open listener on queue " + queueName);
@@ -76,7 +75,7 @@ public class RabbitMQSpout extends BaseRichSpout {
     }
 
     private Connection createConnection() throws IOException {
-        Connection connection = connectionFactory.newConnection(Executors.newScheduledThreadPool(10));
+        Connection connection = configurator.getConnectionFactory().newConnection(Executors.newScheduledThreadPool(10));
         connection.addShutdownListener(new ShutdownListener() {
             @Override
             public void shutdownCompleted(ShutdownSignalException cause) {
