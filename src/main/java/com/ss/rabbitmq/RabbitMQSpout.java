@@ -12,14 +12,14 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 
 public class RabbitMQSpout extends BaseRichSpout {
-    private int prefetchCount;
-    private String queueName;
-    private boolean requeueOnFail;
     private Logger logger;
 
     private Connection connection;
+
     private Channel channel;
+
     private QueueingConsumer consumer;
+
     private String consumerTag;
 
     private ErrorReporter reporter;
@@ -60,16 +60,17 @@ public class RabbitMQSpout extends BaseRichSpout {
         try {
             connection = createConnection();
             channel = connection.createChannel();
-            if (prefetchCount > 0) {
-                logger.info("setting basic.qos / prefetch count to " + prefetchCount + " for " + queueName);
-                channel.basicQos(prefetchCount);
+
+            if (configurator.getPrefetchCount() > 0) {
+                logger.info("setting basic.qos / prefetch count to " + configurator.getPrefetchCount() + " for " + configurator.getQueueName());
+                channel.basicQos(configurator.getPrefetchCount());
             }
 
             consumer = new QueueingConsumer(channel);
-            consumerTag = channel.basicConsume(queueName, configurator.isAutoAcking(), consumer);
+            consumerTag = channel.basicConsume(configurator.getQueueName(), configurator.isAutoAcking(), consumer);
         } catch (Exception e) {
             reset();
-            logger.error("could not open listener on queue " + queueName);
+            logger.error("could not open listener on queue " + configurator.getQueueName());
             reporter.reportError(e);
         }
     }
@@ -84,7 +85,7 @@ public class RabbitMQSpout extends BaseRichSpout {
                 reset();
             }
         });
-        logger.info("connected to rabbitmq: " + connection + " for " + queueName);
+        logger.info("connected to rabbitmq: " + connection + " for " + configurator.getQueueName());
         return connection;
     }
 }

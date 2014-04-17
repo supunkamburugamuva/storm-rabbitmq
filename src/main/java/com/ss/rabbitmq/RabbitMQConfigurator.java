@@ -8,4 +8,12 @@ public interface RabbitMQConfigurator extends Serializable {
     ConnectionFactory getConnectionFactory();
 
     boolean isAutoAcking();
+
+    int getPrefetchCount();
+
+    boolean isReQueueOnFail();
+
+    String getConsumerTag();
+
+    String getQueueName();
 }
