@@ -4,15 +4,12 @@ import backtype.storm.spout.SpoutOutputCollector;
 import backtype.storm.task.TopologyContext;
 import backtype.storm.topology.OutputFieldsDeclarer;
 import backtype.storm.topology.base.BaseRichSpout;
-import com.rabbitmq.client.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.LinkedBlockingDeque;
 
 public class RabbitMQSpout extends BaseRichSpout {
     private Logger logger;
@@ -115,7 +112,6 @@ public class RabbitMQSpout extends BaseRichSpout {
             logger.warn("Deserialization error for msgId " + deliveryTag, e);
             collector.reportError(e);
         }
-        // get the malformed message out of the way by dead-lettering (if dead-lettering is configured) and move on
         MessageConsumer consumer = messageConsumers.get(delivery.getQueue());
         if (consumer != null) {
             consumer.deadLetter(deliveryTag);
