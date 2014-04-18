@@ -7,24 +7,16 @@ import backtype.storm.topology.base.BaseRichSpout;
 import com.rabbitmq.client.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import sun.plugin2.message.Message;
 
-import java.io.IOException;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executors;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingDeque;
 
 public class RabbitMQSpout extends BaseRichSpout {
     private Logger logger;
-
-    private Connection connection;
-
-    private Channel channel;
-
-    private QueueingConsumer consumer;
-
-    private String consumerTag;
 
     private ErrorReporter reporter;
 
@@ -32,8 +24,11 @@ public class RabbitMQSpout extends BaseRichSpout {
 
     private transient SpoutOutputCollector collector;
 
-    private State state = State.INIT;
+    private Map<Long, String> queueMessageMap = new HashMap<Long, String>();
 
+    private Map<String, MessageConsumer> messageConsumers = new HashMap<String, MessageConsumer>();
+
+    private BlockingQueue<Message> messages = new LinkedBlockingDeque<Message>();
 
     public RabbitMQSpout(RabbitMQConfigurator configurator, ErrorReporter reporter) {
         this(configurator, reporter, LoggerFactory.getLogger(RabbitMQSpout.class));
@@ -45,181 +40,72 @@ public class RabbitMQSpout extends BaseRichSpout {
         this.logger = logger;
     }
 
-    public enum State {
-        INIT,
-        CONNECTED,
-        ERROR,
-        RESTARTING
-    }
-
     @Override
     public void declareOutputFields(OutputFieldsDeclarer outputFieldsDeclarer) {
-
+        configurator.declareOutputFields(outputFieldsDeclarer);
     }
 
     @Override
     public void open(Map map, TopologyContext topologyContext, final SpoutOutputCollector spoutOutputCollector) {
-        ErrorReporter reporter = new ErrorReporter() {
-            @Override
-            public void reportError(Throwable error) {
-                spoutOutputCollector.reportError(error);
-            }
-        };
-
         collector = spoutOutputCollector;
 
-        if (state == State.INIT) {
-            openConnection();
+        for (String queue : configurator.getQueueName()) {
+            MessageConsumer consumer = new MessageConsumer(messages, queue,
+                    spoutOutputCollector, configurator, reporter, logger);
+            consumer.openConnection();
+            messageConsumers.put(queue, consumer);
         }
     }
 
     @Override
     public void nextTuple() {
-        QueueingConsumer.Delivery message;
-        while ((message = nextMessage()) != null) {
-            List<Object> tuple = extractTuple(message);
-            if (!tuple.isEmpty()) {
-                collector.emit(tuple, message.getEnvelope().getDeliveryTag());
+        Message message;
+        try {
+            while ((message = messages.take()) != null) {
+                List<Object> tuple = extractTuple(message);
+                if (!tuple.isEmpty()) {
+                    collector.emit(tuple, message.getEnvelope().getDeliveryTag());
+                    if (!configurator.isAutoAcking()) {
+                        queueMessageMap.put(message.getEnvelope().getDeliveryTag(), message.getQueue());
+                    }
+                }
             }
+        } catch (InterruptedException e) {
+            logger.warn("Error in the queue ", e);
         }
     }
 
     @Override
     public void ack(Object msgId) {
         if (msgId instanceof Long) {
-            ackMessage((Long) msgId);
+            String name =  queueMessageMap.remove(msgId);
+            MessageConsumer consumer = messageConsumers.get(name);
+            consumer.ackMessage((Long) msgId);
         }
     }
 
     @Override
     public void fail(Object msgId) {
         if (msgId instanceof Long) {
-            failMessage((Long) msgId);
+            String name =  queueMessageMap.remove(msgId);
+            MessageConsumer consumer = messageConsumers.get(name);
+            consumer.failMessage((Long) msgId);
         }
     }
 
     @Override
     public void close() {
-        closeConnection();
+        for (MessageConsumer consumer : messageConsumers.values()) {
+            consumer.closeConnection();
+        }
         super.close();
     }
 
-    private void reset() {
-        consumerTag = null;
-    }
-
-    private void reinitIfNecessary() {
-        if (consumerTag == null || consumer == null) {
-            closeConnection();
-            openConnection();
-        }
-    }
-
-    public void closeConnection() {
-        try {
-            if (channel != null && channel.isOpen()) {
-                if (consumerTag != null) channel.basicCancel(consumerTag);
-                channel.close();
-            }
-        } catch (Exception e) {
-            logger.debug("error closing channel and/or cancelling consumer", e);
-        }
-        try {
-            logger.info("closing connection to rabbitmq: " + connection);
-            connection.close();
-        } catch (Exception e) {
-            logger.debug("error closing connection", e);
-        }
-        consumer = null;
-        consumerTag = null;
-        channel = null;
-        connection = null;
-    }
-
-    public void openConnection() {
-        try {
-            connection = createConnection();
-            channel = connection.createChannel();
-
-            if (configurator.getPrefetchCount() > 0) {
-                logger.info("setting basic.qos / prefetch count to " + configurator.getPrefetchCount() + " for " + configurator.getQueueName());
-                channel.basicQos(configurator.getPrefetchCount());
-            }
-
-            consumer = new QueueingConsumer(channel);
-            consumerTag = channel.basicConsume(configurator.getQueueName(), configurator.isAutoAcking(), consumer);
-        } catch (Exception e) {
-            reset();
-            logger.error("could not open listener on queue " + configurator.getQueueName());
-            reporter.reportError(e);
-        }
-    }
-
-    private Connection createConnection() throws IOException {
-        Connection connection = configurator.getConnectionFactory().newConnection(Executors.newScheduledThreadPool(10));
-        connection.addShutdownListener(new ShutdownListener() {
-            @Override
-            public void shutdownCompleted(ShutdownSignalException cause) {
-                logger.error("shutdown signal received", cause);
-                reporter.reportError(cause);
-                reset();
-            }
-        });
-        logger.info("connected to rabbitmq: " + connection + " for " + configurator.getQueueName());
-        return connection;
-    }
-
-    public void ackMessage(Long msgId) {
-        try {
-            channel.basicAck(msgId, false);
-        } catch (ShutdownSignalException sse) {
-            reset();
-            logger.error("shutdown signal received while attempting to ack message", sse);
-            reporter.reportError(sse);
-        } catch (Exception e) {
-            logger.error("could not ack for msgId: " + msgId, e);
-            reporter.reportError(e);
-        }
-    }
-
-    public void failMessage(Long msgId) {
-        if (configurator.isReQueueOnFail()) {
-            failWithRedelivery(msgId);
-        } else {
-            deadLetter(msgId);
-        }
-    }
-
-    public void failWithRedelivery(Long msgId) {
-        try {
-            channel.basicReject(msgId, true);
-        } catch (ShutdownSignalException sse) {
-            reset();
-            logger.error("shutdown signal received while attempting to fail with redelivery", sse);
-            reporter.reportError(sse);
-        } catch (Exception e) {
-            logger.error("could not fail with redelivery for msgId: " + msgId, e);
-            reporter.reportError(e);
-        }
-    }
-
-    public void deadLetter(Long msgId) {
-        try {
-            channel.basicReject(msgId, false);
-        } catch (ShutdownSignalException sse) {
-            reset();
-            logger.error("shutdown signal received while attempting to fail with no redelivery", sse);
-            reporter.reportError(sse);
-        } catch (Exception e) {
-            logger.error("could not fail with dead-lettering (when configured) for msgId: " + msgId, e);
-            reporter.reportError(e);
-        }
-    }
-
-    private List<Object> extractTuple(QueueingConsumer.Delivery delivery) {
+    public List<Object> extractTuple(Message delivery) {
         long deliveryTag = delivery.getEnvelope().getDeliveryTag();
         try {
-            List<Object> tuple = configurator.getMessageBuilder().deSerialize(delivery);
+            List<Object> tuple = configurator.getMessageBuilder().deSerialize(delivery.getConsumerTag(),
+                    delivery.getEnvelope(), delivery.getProperties(), delivery.getBody());
             if (tuple != null && !tuple.isEmpty()) {
                 return tuple;
             }
@@ -231,29 +117,11 @@ public class RabbitMQSpout extends BaseRichSpout {
             collector.reportError(e);
         }
         // get the malformed message out of the way by dead-lettering (if dead-lettering is configured) and move on
-        deadLetter(deliveryTag);
-        return Collections.emptyList();
-    }
-
-    public QueueingConsumer.Delivery nextMessage() {
-        reinitIfNecessary();
-        try {
-            return consumer.nextDelivery();
-        } catch (ShutdownSignalException sse) {
-            reset();
-            logger.error("shutdown signal received while attempting to get next message", sse);
-            reporter.reportError(sse);
-            return null;
-        } catch (InterruptedException ie) {
-            /* nothing to do. timed out waiting for message */
-            logger.debug("interruepted while waiting for message", ie);
-            return null;
-        } catch (ConsumerCancelledException cce) {
-            /* if the queue on the broker was deleted or node in the cluster containing the queue failed */
-            reset();
-            logger.error("consumer got cancelled while attempting to get next message", cce);
-            reporter.reportError(cce);
-            return null;
+        MessageConsumer consumer = messageConsumers.get(delivery.getQueue());
+        if (consumer != null) {
+            consumer.deadLetter(deliveryTag);
         }
+
+        return Collections.emptyList();
     }
 }
