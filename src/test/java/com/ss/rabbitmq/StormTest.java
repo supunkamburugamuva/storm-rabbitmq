@@ -77,12 +77,12 @@ public class StormTest {
 
         @Override
         public boolean isAutoAcking() {
-            return true;
+            return false;
         }
 
         @Override
         public int getPrefetchCount() {
-            return 2;
+            return 1024;
         }
 
         @Override
@@ -108,6 +108,11 @@ public class StormTest {
         @Override
         public void declareOutputFields(OutputFieldsDeclarer outputFieldsDeclarer) {
             outputFieldsDeclarer.declare(new Fields("time1"));
+        }
+
+        @Override
+        public int queueSize() {
+            return 1024;
         }
     }
 

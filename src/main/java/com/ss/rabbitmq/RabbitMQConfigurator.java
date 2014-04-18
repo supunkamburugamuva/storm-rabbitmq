@@ -22,4 +22,6 @@ public interface RabbitMQConfigurator extends Serializable {
     MessageBuilder getMessageBuilder();
 
     void declareOutputFields(OutputFieldsDeclarer outputFieldsDeclarer);
+
+    int queueSize();
 }

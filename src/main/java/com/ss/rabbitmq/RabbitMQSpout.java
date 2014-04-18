@@ -24,7 +24,7 @@ public class RabbitMQSpout extends BaseRichSpout {
 
     private Map<String, MessageConsumer> messageConsumers = new HashMap<String, MessageConsumer>();
 
-    private BlockingQueue<Message> messages = new ArrayBlockingQueue<Message>(1024);
+    private BlockingQueue<Message> messages;
 
     public RabbitMQSpout(RabbitMQConfigurator configurator, ErrorReporter reporter) {
         this(configurator, reporter, LoggerFactory.getLogger(RabbitMQSpout.class));
@@ -34,6 +34,7 @@ public class RabbitMQSpout extends BaseRichSpout {
         this.configurator = configurator;
         this.reporter = reporter;
         this.logger = logger;
+        this.messages = new ArrayBlockingQueue<Message>(configurator.queueSize());
     }
 
     @Override
