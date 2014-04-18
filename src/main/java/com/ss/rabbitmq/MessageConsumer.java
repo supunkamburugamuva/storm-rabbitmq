@@ -1,14 +1,11 @@
 package com.ss.rabbitmq;
 
-import backtype.storm.spout.SpoutOutputCollector;
 import com.rabbitmq.client.*;
 import org.slf4j.Logger;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
+import java.util.Queue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.Executors;
 
 public class MessageConsumer {
     public enum State {
@@ -33,8 +30,6 @@ public class MessageConsumer {
 
     private String queueName;
 
-    private transient SpoutOutputCollector collector;
-
     private State state = State.INIT;
 
     private Logger logger;
@@ -42,11 +37,9 @@ public class MessageConsumer {
     private BlockingQueue<Message> messages;
 
     public MessageConsumer(BlockingQueue<Message> messages, String queueName,
-                           SpoutOutputCollector collector,
                            RabbitMQConfigurator configurator,
                            ErrorReporter reporter, Logger logger) {
         this.queueName = queueName;
-        this.collector = collector;
         this.configurator = configurator;
         this.reporter = reporter;
         this.logger = logger;
@@ -121,17 +114,26 @@ public class MessageConsumer {
     }
 
     private Connection createConnection() throws IOException {
-        Connection connection = configurator.getConnectionFactory().newConnection(Executors.newScheduledThreadPool(10));
-        connection.addShutdownListener(new ShutdownListener() {
-            @Override
-            public void shutdownCompleted(ShutdownSignalException cause) {
-                logger.error("shutdown signal received", cause);
-                reporter.reportError(cause);
-                reset();
-            }
-        });
-        logger.info("connected to rabbitmq: " + connection + " for " + configurator.getQueueName());
-        return connection;
+        try {
+            ConnectionFactory connectionFactory = new ConnectionFactory();
+            connectionFactory.setUri(configurator.getURL());
+            Connection connection = connectionFactory.newConnection();
+            connection.addShutdownListener(new ShutdownListener() {
+                @Override
+                public void shutdownCompleted(ShutdownSignalException cause) {
+                    logger.error("shutdown signal received", cause);
+                    reporter.reportError(cause);
+                    reset();
+                }
+            });
+            logger.info("connected to rabbitmq: " + connection + " for " + configurator.getQueueName());
+            return connection;
+
+        } catch (Exception e) {
+            logger.info("connected to rabbitmq: " + connection + " for " + configurator.getQueueName());
+            reporter.reportError(e);
+            return null;
+        }
     }
 
     public void ackMessage(Long msgId) {

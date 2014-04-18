@@ -8,11 +8,10 @@ import com.rabbitmq.client.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingDeque;
 
 public class RabbitMQSpout extends BaseRichSpout {
@@ -28,7 +27,7 @@ public class RabbitMQSpout extends BaseRichSpout {
 
     private Map<String, MessageConsumer> messageConsumers = new HashMap<String, MessageConsumer>();
 
-    private BlockingQueue<Message> messages = new LinkedBlockingDeque<Message>();
+    private BlockingQueue<Message> messages = new ArrayBlockingQueue<Message>(1024);
 
     public RabbitMQSpout(RabbitMQConfigurator configurator, ErrorReporter reporter) {
         this(configurator, reporter, LoggerFactory.getLogger(RabbitMQSpout.class));
@@ -51,7 +50,7 @@ public class RabbitMQSpout extends BaseRichSpout {
 
         for (String queue : configurator.getQueueName()) {
             MessageConsumer consumer = new MessageConsumer(messages, queue,
-                    spoutOutputCollector, configurator, reporter, logger);
+                    configurator, reporter, logger);
             consumer.openConnection();
             messageConsumers.put(queue, consumer);
         }
@@ -60,36 +59,36 @@ public class RabbitMQSpout extends BaseRichSpout {
     @Override
     public void nextTuple() {
         Message message;
-        try {
-            while ((message = messages.take()) != null) {
-                List<Object> tuple = extractTuple(message);
-                if (!tuple.isEmpty()) {
-                    collector.emit(tuple, message.getEnvelope().getDeliveryTag());
-                    if (!configurator.isAutoAcking()) {
-                        queueMessageMap.put(message.getEnvelope().getDeliveryTag(), message.getQueue());
-                    }
+        while ((message = messages.poll()) != null) {
+            List<Object> tuple = extractTuple(message);
+            if (!tuple.isEmpty()) {
+                collector.emit(tuple, message.getEnvelope().getDeliveryTag());
+                if (!configurator.isAutoAcking()) {
+                    queueMessageMap.put(message.getEnvelope().getDeliveryTag(), message.getQueue());
                 }
             }
-        } catch (InterruptedException e) {
-            logger.warn("Error in the queue ", e);
         }
     }
 
     @Override
     public void ack(Object msgId) {
         if (msgId instanceof Long) {
-            String name =  queueMessageMap.remove(msgId);
-            MessageConsumer consumer = messageConsumers.get(name);
-            consumer.ackMessage((Long) msgId);
+            if (!configurator.isAutoAcking()) {
+                String name =  queueMessageMap.remove(msgId);
+                MessageConsumer consumer = messageConsumers.get(name);
+                consumer.ackMessage((Long) msgId);
+            }
         }
     }
 
     @Override
     public void fail(Object msgId) {
         if (msgId instanceof Long) {
-            String name =  queueMessageMap.remove(msgId);
-            MessageConsumer consumer = messageConsumers.get(name);
-            consumer.failMessage((Long) msgId);
+            if (!configurator.isAutoAcking()) {
+                String name =  queueMessageMap.remove(msgId);
+                MessageConsumer consumer = messageConsumers.get(name);
+                consumer.failMessage((Long) msgId);
+            }
         }
     }
 

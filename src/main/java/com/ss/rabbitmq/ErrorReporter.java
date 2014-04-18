@@ -1,5 +1,7 @@
 package com.ss.rabbitmq;
 
-public interface ErrorReporter {
+import java.io.Serializable;
+
+public interface ErrorReporter extends Serializable {
     void reportError(Throwable t);
 }

@@ -7,7 +7,7 @@ import java.io.Serializable;
 import java.util.List;
 
 public interface RabbitMQConfigurator extends Serializable {
-    ConnectionFactory getConnectionFactory();
+    String getURL();
 
     boolean isAutoAcking();
 
