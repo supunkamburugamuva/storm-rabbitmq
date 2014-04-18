@@ -16,4 +16,6 @@ public interface RabbitMQConfigurator extends Serializable {
     String getConsumerTag();
 
     String getQueueName();
+
+    MessageBuilder getMessageBuilder();
 }

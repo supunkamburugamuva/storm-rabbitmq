@@ -7,6 +7,7 @@ import backtype.storm.topology.base.BaseRichSpout;
 import com.rabbitmq.client.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import sun.plugin2.message.Message;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -32,6 +33,7 @@ public class RabbitMQSpout extends BaseRichSpout {
     private transient SpoutOutputCollector collector;
 
     private State state = State.INIT;
+
 
     public RabbitMQSpout(RabbitMQConfigurator configurator, ErrorReporter reporter) {
         this(configurator, reporter, LoggerFactory.getLogger(RabbitMQSpout.class));
@@ -73,7 +75,13 @@ public class RabbitMQSpout extends BaseRichSpout {
 
     @Override
     public void nextTuple() {
-
+        QueueingConsumer.Delivery message;
+        while ((message = nextMessage()) != null) {
+            List<Object> tuple = extractTuple(message);
+            if (!tuple.isEmpty()) {
+                collector.emit(tuple, message.getEnvelope().getDeliveryTag());
+            }
+        }
     }
 
     @Override
@@ -175,10 +183,11 @@ public class RabbitMQSpout extends BaseRichSpout {
     }
 
     public void failMessage(Long msgId) {
-        if (requeueOnFail)
+        if (configurator.isReQueueOnFail()) {
             failWithRedelivery(msgId);
-        else
+        } else {
             deadLetter(msgId);
+        }
     }
 
     public void failWithRedelivery(Long msgId) {
@@ -207,10 +216,10 @@ public class RabbitMQSpout extends BaseRichSpout {
         }
     }
 
-    private List<Object> extractTuple(Envelope envelope, byte []body, ) {
-        long deliveryTag = envelope.getDeliveryTag();
+    private List<Object> extractTuple(QueueingConsumer.Delivery delivery) {
+        long deliveryTag = delivery.getEnvelope().getDeliveryTag();
         try {
-            List<Object> tuple = scheme.deserialize(message);
+            List<Object> tuple = configurator.getMessageBuilder().deSerialize(delivery);
             if (tuple != null && !tuple.isEmpty()) {
                 return tuple;
             }
@@ -227,24 +236,24 @@ public class RabbitMQSpout extends BaseRichSpout {
     }
 
     public QueueingConsumer.Delivery nextMessage() {
-        reinitIfNecessary();        
+        reinitIfNecessary();
         try {
             return consumer.nextDelivery();
         } catch (ShutdownSignalException sse) {
             reset();
             logger.error("shutdown signal received while attempting to get next message", sse);
             reporter.reportError(sse);
-            return Message.NONE;
+            return null;
         } catch (InterruptedException ie) {
             /* nothing to do. timed out waiting for message */
             logger.debug("interruepted while waiting for message", ie);
-            return Message.NONE;
+            return null;
         } catch (ConsumerCancelledException cce) {
             /* if the queue on the broker was deleted or node in the cluster containing the queue failed */
             reset();
             logger.error("consumer got cancelled while attempting to get next message", cce);
             reporter.reportError(cce);
-            return Message.NONE;
+            return null;
         }
     }
 }
