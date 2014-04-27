@@ -3,7 +3,6 @@ package com.ss.rabbitmq;
 import backtype.storm.Config;
 import backtype.storm.LocalCluster;
 import backtype.storm.StormSubmitter;
-import backtype.storm.spout.Scheme;
 import backtype.storm.task.OutputCollector;
 import backtype.storm.task.TopologyContext;
 import backtype.storm.topology.OutputFieldsDeclarer;
@@ -23,7 +22,6 @@ import java.util.List;
 import java.util.Map;
 
 public class StormTest {
-
     public static void main(String[] args) throws Exception {
         TopologyBuilder builder = new TopologyBuilder();
 
